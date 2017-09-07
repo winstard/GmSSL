@@ -48,11 +48,12 @@
  */
 
 #include <stdio.h>
+#include <openssl/sm2.h>
 #include <openssl/ec.h>
 #include <openssl/gmapi.h>
 #include <openssl/skf.h>
 #include "../ec/ec_lcl.h"
-
+#include "../sm2/sm2_lcl.h"
 
 EC_KEY *EC_KEY_new_from_ECCPUBLICKEYBLOB(const ECCPUBLICKEYBLOB *blob)
 {
@@ -78,20 +79,17 @@ int EC_KEY_set_ECCPUBLICKEYBLOB(EC_KEY *ec_key, const ECCPUBLICKEYBLOB *blob)
 	int ret = 0;
 	BIGNUM *x = NULL;
 	BIGNUM *y = NULL;
-	int nbytes;
 
 	if (blob->BitLen != EC_GROUP_get_degree(EC_KEY_get0_group(ec_key))) {
 		GMAPIerr(GMAPI_F_EC_KEY_SET_ECCPUBLICKEYBLOB, GMAPI_R_INVALID_KEY_LENGTH);
 		return 0;
 	}
 
-	nbytes = (blob->BitLen + 7)/8;
-
-	if (!(x = BN_bin2bn(blob->XCoordinate, nbytes, NULL))) {
+	if (!(x = BN_bin2bn(blob->XCoordinate, ECC_MAX_XCOORDINATE_BITS_LEN/8, NULL))) {
 		GMAPIerr(GMAPI_F_EC_KEY_SET_ECCPUBLICKEYBLOB, ERR_R_BN_LIB);
 		goto end;
 	}
-	if (!(y = BN_bin2bn(blob->YCoordinate, nbytes, NULL))) {
+	if (!(y = BN_bin2bn(blob->YCoordinate, ECC_MAX_YCOORDINATE_BITS_LEN/8, NULL))) {
 		GMAPIerr(GMAPI_F_EC_KEY_SET_ECCPUBLICKEYBLOB, ERR_R_BN_LIB);
 		goto end;
 	}
@@ -110,15 +108,13 @@ end:
 int EC_KEY_get_ECCPUBLICKEYBLOB(EC_KEY *ec_key, ECCPUBLICKEYBLOB *blob)
 {
 	int ret = 0;
-	int nbytes;
 	BIGNUM *x = NULL;
 	BIGNUM *y = NULL;
 	BN_CTX *bn_ctx = NULL;
 	const EC_GROUP *group = EC_KEY_get0_group(ec_key);
 	const EC_POINT *point = EC_KEY_get0_public_key(ec_key);
 
-	nbytes = (EC_GROUP_get_degree(group) + 7)/8;
-	if (nbytes > ECC_MAX_MODULUS_BITS_LEN/8) {
+	if (EC_GROUP_get_degree(group) > ECC_MAX_MODULUS_BITS_LEN) {
 		GMAPIerr(GMAPI_F_EC_KEY_GET_ECCPUBLICKEYBLOB, GMAPI_R_INVALID_KEY_LENGTH);
 		goto end;
 	}
@@ -145,11 +141,11 @@ int EC_KEY_get_ECCPUBLICKEYBLOB(EC_KEY *ec_key, ECCPUBLICKEYBLOB *blob)
 
 	memset(blob, 0, sizeof(*blob));
 	blob->BitLen = EC_GROUP_get_degree(group);
-	if (!BN_bn2bin(x, blob->XCoordinate + nbytes - BN_num_bytes(x))) {
+	if (!BN_bn2bin(x, blob->XCoordinate + (ECC_MAX_XCOORDINATE_BITS_LEN+7)/8 - BN_num_bytes(x))) {
 		GMAPIerr(GMAPI_F_EC_KEY_GET_ECCPUBLICKEYBLOB, ERR_R_BN_LIB);
 		goto end;
 	}
-	if (!BN_bn2bin(y, blob->YCoordinate + nbytes - BN_num_bytes(y))) {
+	if (!BN_bn2bin(y, blob->YCoordinate + (ECC_MAX_YCOORDINATE_BITS_LEN+7)/8 - BN_num_bytes(y))) {
 		GMAPIerr(GMAPI_F_EC_KEY_GET_ECCPUBLICKEYBLOB, ERR_R_BN_LIB);
 		goto end;
 	}
@@ -185,20 +181,17 @@ int EC_KEY_set_ECCPRIVATEKEYBLOB(EC_KEY *ec_key, const ECCPRIVATEKEYBLOB *blob)
 {
 	int ret = 0;
 	BIGNUM *d = NULL;
-	int nbytes;
 
-	//FIXME: is this right?
 	if (blob->BitLen != EC_GROUP_get_degree(EC_KEY_get0_group(ec_key))) {
 		GMAPIerr(GMAPI_F_EC_KEY_SET_ECCPRIVATEKEYBLOB, GMAPI_R_INVALID_KEY_LENGTH);
 		goto end;
 	}
 
-	nbytes = (blob->BitLen + 7)/8;
-
-	if (!(d = BN_bin2bn(blob->PrivateKey, nbytes, NULL))) {
+	if (!(d = BN_bin2bn(blob->PrivateKey, (ECC_MAX_MODULUS_BITS_LEN+7)/8, NULL))) {
 		GMAPIerr(GMAPI_F_EC_KEY_SET_ECCPRIVATEKEYBLOB, ERR_R_BN_LIB);
 		goto end;
 	}
+
 	if (!EC_KEY_set_private_key(ec_key, d)) {
 		GMAPIerr(GMAPI_F_EC_KEY_SET_ECCPRIVATEKEYBLOB, GMAPI_R_INVALID_PRIVATE_KEY);
 		goto end;
@@ -212,77 +205,48 @@ end:
 
 int EC_KEY_get_ECCPRIVATEKEYBLOB(EC_KEY *ec_key, ECCPRIVATEKEYBLOB *blob)
 {
-	int ret = 0;
-	BIGNUM *order = NULL;
 	const BIGNUM *d;
-	int nbytes;
 
-	if (!(order = BN_new())) {
-		GMAPIerr(GMAPI_F_EC_KEY_GET_ECCPRIVATEKEYBLOB, GMAPI_R_MALLOC_FAILED);
-		goto end;
-	}
-
-	if (!EC_GROUP_get_order(EC_KEY_get0_group(ec_key), order, NULL)) {
-		GMAPIerr(GMAPI_F_EC_KEY_GET_ECCPRIVATEKEYBLOB, ERR_R_EC_LIB);
-		goto end;
-	}
-
-	nbytes = BN_num_bytes(order);
-	if (nbytes > ECC_MAX_MODULUS_BITS_LEN/8) {
+	if (EC_GROUP_get_degree(EC_KEY_get0_group(ec_key)) > ECC_MAX_MODULUS_BITS_LEN) {
 		GMAPIerr(GMAPI_F_EC_KEY_GET_ECCPRIVATEKEYBLOB, GMAPI_R_INVALID_KEY_LENGTH);
-		goto end;
+		return 0;
 	}
 
 	if (!(d = EC_KEY_get0_private_key(ec_key))) {
 		GMAPIerr(GMAPI_F_EC_KEY_GET_ECCPRIVATEKEYBLOB, GMAPI_R_INVALID_EC_KEY);
-		goto end;
+		return 0;
 	}
 
-	if (!BN_bn2bin(d, blob->PrivateKey + nbytes - BN_num_bytes(d))) {
+	memset(blob, 0, sizeof(*blob));
+
+	blob->BitLen = EC_GROUP_get_degree(EC_KEY_get0_group(ec_key));
+
+	if (!BN_bn2bin(d, blob->PrivateKey + (ECC_MAX_MODULUS_BITS_LEN+7)/8 - BN_num_bytes(d))) {
 		GMAPIerr(GMAPI_F_EC_KEY_GET_ECCPRIVATEKEYBLOB, ERR_R_BN_LIB);
-		goto end;
+		return 0;
 	}
 
-	ret = 1;
-
-end:
-	BN_free(order);
-	return ret;
+	return 1;
 }
 
 SM2CiphertextValue *SM2CiphertextValue_new_from_ECCCIPHERBLOB(
 	const ECCCIPHERBLOB *blob)
 {
-	int ok = 0;
 	SM2CiphertextValue *ret = NULL;
-	EC_GROUP *group = NULL;
 
-	if (!(group = EC_GROUP_new_by_curve_name(NID_sm2p256v1))) {
-		GMAPIerr(GMAPI_F_SM2CIPHERTEXTVALUE_NEW_FROM_ECCCIPHERBLOB,
-			ERR_R_EC_LIB);
-		goto end;
-	}
-
-	if (!(ret = SM2CiphertextValue_new(group))) {
+	if (!(ret = SM2CiphertextValue_new())) {
 		GMAPIerr(GMAPI_F_SM2CIPHERTEXTVALUE_NEW_FROM_ECCCIPHERBLOB,
 			GMAPI_R_MALLOC_FAILED);
-		goto end;
+		return NULL;
 	}
 
 	if (!SM2CiphertextValue_set_ECCCIPHERBLOB(ret, blob)) {
 		GMAPIerr(GMAPI_F_SM2CIPHERTEXTVALUE_NEW_FROM_ECCCIPHERBLOB,
 			GMAPI_R_INVALID_EC_PUBLIC_KEY);
-		goto end;
-	}
-
-	ok = 1;
-
-end:
-	if (!ok) {
 		SM2CiphertextValue_free(ret);
-		ret = NULL;
+		return NULL;
 	}
-	EC_GROUP_free(group);
+
 	return ret;
 }
 
@@ -290,78 +254,37 @@ int SM2CiphertextValue_set_ECCCIPHERBLOB(SM2CiphertextValue *cv,
 	const ECCCIPHERBLOB *blob)
 {
 	int ret = 0;
-	EC_GROUP *group = NULL;
-	BIGNUM *x = NULL;
-	BIGNUM *y = NULL;
-	BN_CTX *bn_ctx = NULL;
-	int nbytes;
 
-	if (!(group = EC_GROUP_new_by_curve_name(NID_sm2p256v1))) {
-		GMAPIerr(GMAPI_F_SM2CIPHERTEXTVALUE_SET_ECCCIPHERBLOB,
-			ERR_R_EC_LIB);
+	if (!cv || !blob) {
 		return 0;
 	}
 
-	nbytes = (EC_GROUP_get_degree(group) + 7)/8;
-	if (nbytes > ECC_MAX_XCOORDINATE_BITS_LEN/8) {
-		GMAPIerr(GMAPI_F_SM2CIPHERTEXTVALUE_SET_ECCCIPHERBLOB,
-			GMAPI_R_INVALID_KEY_LENGTH);
-		goto end;
-	}
-
-	if (!(x = BN_bin2bn(blob->XCoordinate, nbytes, NULL))) {
-		GMAPIerr(GMAPI_F_SM2CIPHERTEXTVALUE_SET_ECCCIPHERBLOB, ERR_R_BN_LIB);
-		goto end;
-	}
-	if (!(y = BN_bin2bn(blob->YCoordinate, nbytes, NULL))) {
-		GMAPIerr(GMAPI_F_SM2CIPHERTEXTVALUE_SET_ECCCIPHERBLOB, ERR_R_BN_LIB);
-		goto end;
-	}
-	if (!(bn_ctx = BN_CTX_new())) {
+	if (!BN_bin2bn(blob->XCoordinate, ECC_MAX_XCOORDINATE_BITS_LEN/8,
+		cv->xCoordinate)) {
 		GMAPIerr(GMAPI_F_SM2CIPHERTEXTVALUE_SET_ECCCIPHERBLOB, ERR_R_BN_LIB);
 		goto end;
 	}
 
-	if (!cv->ephem_point) {
-		if (!(cv->ephem_point = EC_POINT_new(group))) {
-			GMAPIerr(GMAPI_F_SM2CIPHERTEXTVALUE_SET_ECCCIPHERBLOB, ERR_R_EC_LIB);
-			goto end;
-		}
-	}
-	if (EC_METHOD_get_field_type(EC_GROUP_method_of(group)) == NID_X9_62_prime_field) {
-		if (!EC_POINT_set_affine_coordinates_GFp(group, cv->ephem_point, x, y, bn_ctx)) {
-			GMAPIerr(GMAPI_F_SM2CIPHERTEXTVALUE_SET_ECCCIPHERBLOB, ERR_R_EC_LIB);
-			goto end;
-		}
-	} else  {
-		if (!EC_POINT_get_affine_coordinates_GF2m(group, cv->ephem_point, x, y, bn_ctx)) {
-			GMAPIerr(GMAPI_F_SM2CIPHERTEXTVALUE_SET_ECCCIPHERBLOB, ERR_R_EC_LIB);
-			goto end;
-		}
+	if (!BN_bin2bn(blob->YCoordinate, ECC_MAX_YCOORDINATE_BITS_LEN/8,
+		cv->yCoordinate)) {
+		GMAPIerr(GMAPI_F_SM2CIPHERTEXTVALUE_SET_ECCCIPHERBLOB, ERR_R_BN_LIB);
+		goto end;
 	}
 
-	memcpy(cv->mactag, blob->HASH, 32);
-	cv->mactag_size = 32;
+	if (!ASN1_OCTET_STRING_set(cv->hash, blob->HASH, 32)) {
+		GMAPIerr(GMAPI_F_SM2CIPHERTEXTVALUE_SET_ECCCIPHERBLOB, ERR_R_ASN1_LIB);
+		goto end;
+	}
 
-	if ((cv->ciphertext_size = blob->CipherLen) <= 0) {
+	if (!ASN1_OCTET_STRING_set(cv->ciphertext, blob->Cipher,
+		blob->CipherLen)) {
 		GMAPIerr(GMAPI_F_SM2CIPHERTEXTVALUE_SET_ECCCIPHERBLOB,
 			GMAPI_R_INVALID_CIPHERTEXT_LENGTH);
 		goto end;
 	}
-	if (!(cv->ciphertext = OPENSSL_realloc(cv->ciphertext, blob->CipherLen))) {
-		GMAPIerr(GMAPI_F_SM2CIPHERTEXTVALUE_SET_ECCCIPHERBLOB,
-			GMAPI_R_MALLOC_FAILED);
-		goto end;
-	}
-	memcpy(cv->ciphertext, blob->Cipher, blob->CipherLen);
 
 	ret = 0;
-
 end:
-	EC_GROUP_free(group);
-	BN_free(x);
-	BN_free(y);
-	BN_CTX_free(bn_ctx);
 	return ret;
 }
 
@@ -369,71 +292,46 @@ int SM2CiphertextValue_get_ECCCIPHERBLOB(const SM2CiphertextValue *cv,
 	ECCCIPHERBLOB *blob)
 {
 	int ret = 0;
-	EC_GROUP *group = NULL;
-	BIGNUM *x = NULL;
-	BIGNUM *y = NULL;
-	BN_CTX *bn_ctx = NULL;
 
-	if (!(group = EC_GROUP_new_by_curve_name(NID_sm2p256v1))) {
-		GMAPIerr(GMAPI_F_SM2CIPHERTEXTVALUE_GET_ECCCIPHERBLOB, ERR_R_EC_LIB);
+	if (BN_num_bits(cv->xCoordinate) > ECC_MAX_XCOORDINATE_BITS_LEN ||
+		BN_num_bits(cv->yCoordinate) > ECC_MAX_YCOORDINATE_BITS_LEN) {
+		GMAPIerr(GMAPI_F_SM2CIPHERTEXTVALUE_GET_ECCCIPHERBLOB,
+			GMAPI_R_INVALID_CIPHERTEXT_POINT);
 		return 0;
 	}
 
-	x = BN_new();
-	y = BN_new();
-	bn_ctx = BN_CTX_new();
-	if (!x || !y || !bn_ctx) {
-		GMAPIerr(GMAPI_F_SM2CIPHERTEXTVALUE_GET_ECCCIPHERBLOB, ERR_R_BN_LIB);
-		goto end;
-	}
-
-	if (EC_METHOD_get_field_type(EC_GROUP_method_of(group)) == NID_X9_62_prime_field) {
-		if (!EC_POINT_get_affine_coordinates_GFp(group, cv->ephem_point, x, y, bn_ctx)) {
-			GMAPIerr(GMAPI_F_SM2CIPHERTEXTVALUE_GET_ECCCIPHERBLOB, ERR_R_EC_LIB);
-			goto end;
-		}
-	} else  {
-		if (!EC_POINT_get_affine_coordinates_GF2m(group, cv->ephem_point, x, y, bn_ctx)) {
-			GMAPIerr(GMAPI_F_SM2CIPHERTEXTVALUE_GET_ECCCIPHERBLOB, ERR_R_EC_LIB);
-			goto end;
-		}
-	}
-
-	if ((BN_num_bytes(x) > 256/8) || (BN_num_bytes(y) > 256/8)) {
-		GMAPIerr(GMAPI_F_SM2CIPHERTEXTVALUE_GET_ECCCIPHERBLOB,
-			GMAPI_R_INVALID_CIPHERTEXT_POINT);
-		goto end;
-	}
-	if (!BN_bn2bin(x, blob->XCoordinate + 256/8 - BN_num_bytes(x))) {
-		GMAPIerr(GMAPI_F_SM2CIPHERTEXTVALUE_GET_ECCCIPHERBLOB, ERR_R_BN_LIB);
-		goto end;
-	}
-	if (!BN_bn2bin(y, blob->YCoordinate + 256/8 - BN_num_bytes(y))) {
-		GMAPIerr(GMAPI_F_SM2CIPHERTEXTVALUE_GET_ECCCIPHERBLOB, ERR_R_BN_LIB);
-		goto end;
-	}
-
-	if (cv->mactag_size != 32) {
-		GMAPIerr(GMAPI_F_SM2CIPHERTEXTVALUE_GET_ECCCIPHERBLOB,
-			GMAPI_R_INVALID_CIPHERTEXT_MAC);
-		goto end;
-	}
-	memcpy(blob->HASH, cv->mactag, cv->mactag_size);
-
-	if (cv->ciphertext_size <= 0) {
+	if (ASN1_STRING_length(cv->hash) != 32) {
 		GMAPIerr(GMAPI_F_SM2CIPHERTEXTVALUE_GET_ECCCIPHERBLOB,
 			GMAPI_R_INVALID_CIPHERTEXT_LENGTH);
-		goto end;
+		return 0;
 	}
-	memcpy(blob->Cipher, cv->ciphertext, cv->ciphertext_size);
 
-	ret = 1;
-end:
-	EC_GROUP_free(group);
-	BN_free(x);
-	BN_free(y);
-	BN_CTX_free(bn_ctx);
-	return ret;
+	if (blob->CipherLen < ASN1_STRING_length(cv->ciphertext)) {
+		GMAPIerr(GMAPI_F_SM2CIPHERTEXTVALUE_GET_ECCCIPHERBLOB,
+			GMAPI_R_BUFFER_TOO_SMALL);
+		return 0;
+		return 0;
+	}
+
+	if (!BN_bn2bin(cv->xCoordinate, blob->XCoordinate +
+		ECC_MAX_XCOORDINATE_BITS_LEN/8 - BN_num_bytes(cv->xCoordinate))) {
+		GMAPIerr(GMAPI_F_SM2CIPHERTEXTVALUE_GET_ECCCIPHERBLOB, ERR_R_BN_LIB);
+		return 0;
+	}
+	if (!BN_bn2bin(cv->yCoordinate, blob->YCoordinate +
+		ECC_MAX_YCOORDINATE_BITS_LEN/8 - BN_num_bytes(cv->yCoordinate))) {
+		GMAPIerr(GMAPI_F_SM2CIPHERTEXTVALUE_GET_ECCCIPHERBLOB, ERR_R_BN_LIB);
+		return 0;
+	}
+
+	memcpy(blob->HASH, ASN1_STRING_get0_data(cv->hash),
+		ASN1_STRING_length(cv->hash));
+
+	blob->CipherLen = ASN1_STRING_length(cv->ciphertext);
+	memcpy(blob->Cipher, ASN1_STRING_get0_data(cv->ciphertext),
+		ASN1_STRING_length(cv->ciphertext));
+
+	return 1;
 }
 
 ECDSA_SIG *ECDSA_SIG_new_from_ECCSIGNATUREBLOB(const ECCSIGNATUREBLOB *blob)
@@ -458,35 +356,35 @@ ECDSA_SIG *ECDSA_SIG_new_from_ECCSIGNATUREBLOB(const ECCSIGNATUREBLOB *blob)
 
 int ECDSA_SIG_set_ECCSIGNATUREBLOB(ECDSA_SIG *sig, const ECCSIGNATUREBLOB *blob)
 {
-	if (!(sig->r = BN_bin2bn(blob->r, 256/8, sig->r))) {
+	if (!(sig->r = BN_bin2bn(blob->r, 64, sig->r))) {
 		GMAPIerr(GMAPI_F_ECDSA_SIG_SET_ECCSIGNATUREBLOB, ERR_R_BN_LIB);
-		return SAR_FAIL;
+		return 0;
 	}
 
-	if (!(sig->s = BN_bin2bn(blob->s, 256/8, sig->s))) {
+	if (!(sig->s = BN_bin2bn(blob->s, 64, sig->s))) {
 		GMAPIerr(GMAPI_F_ECDSA_SIG_SET_ECCSIGNATUREBLOB, ERR_R_BN_LIB);
-		return SAR_FAIL;
+		return 0;
 	}
 
-	return SAR_OK;
+	return 1;
 }
 
 int ECDSA_SIG_get_ECCSIGNATUREBLOB(const ECDSA_SIG *sig, ECCSIGNATUREBLOB *blob)
 {
 	if ((BN_num_bytes(sig->r) > 256/8) || (BN_num_bytes(sig->s) > 256/8)) {
 		GMAPIerr(GMAPI_F_ECDSA_SIG_GET_ECCSIGNATUREBLOB, GMAPI_R_INVALID_BIGNUM_LENGTH);
-		return SAR_FAIL;
+		return 0;
 	}
 
 	if (!BN_bn2bin(sig->r, blob->r + 256/8 - BN_num_bytes(sig->r))) {
 		GMAPIerr(GMAPI_F_ECDSA_SIG_GET_ECCSIGNATUREBLOB, ERR_R_BN_LIB);
-		return SAR_FAIL;
+		return 0;
 	}
 
 	if (!BN_bn2bin(sig->s, blob->s + 256/8 - BN_num_bytes(sig->s))) {
 		GMAPIerr(GMAPI_F_ECDSA_SIG_GET_ECCSIGNATUREBLOB, ERR_R_BN_LIB);
-		return SAR_FAIL;
+		return 0;
 	}
 
-	return SAR_OK;
+	return 1;
 }

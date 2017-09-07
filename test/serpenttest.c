@@ -1,5 +1,59 @@
-// test unit for serpent-256
-// Odzhan
+/* ====================================================================
+ * Copyright (c) 2014 - 2017 The GmSSL Project.  All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in
+ *    the documentation and/or other materials provided with the
+ *    distribution.
+ *
+ * 3. All advertising materials mentioning features or use of this
+ *    software must display the following acknowledgment:
+ *    "This product includes software developed by the GmSSL Project.
+ *    (http://gmssl.org/)"
+ *
+ * 4. The name "GmSSL Project" must not be used to endorse or promote
+ *    products derived from this software without prior written
+ *    permission. For written permission, please contact
+ *    guanzhi1980@gmail.com.
+ *
+ * 5. Products derived from this software may not be called "GmSSL"
+ *    nor may "GmSSL" appear in their names without prior written
+ *    permission of the GmSSL Project.
+ *
+ * 6. Redistributions of any form whatsoever must retain the following
+ *    acknowledgment:
+ *    "This product includes software developed by the GmSSL Project
+ *    (http://gmssl.org/)"
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE GmSSL PROJECT ``AS IS'' AND ANY
+ * EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE GmSSL PROJECT OR
+ * ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+ * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+ * OF THE POSSIBILITY OF SUCH DAMAGE.
+ * ====================================================================
+ */
+
+
+
+/* ======================
+* test unit for serpent-256
+* Odzhan
+*========================
+*/
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -7,7 +61,17 @@
 #include <string.h>
 #include <ctype.h>
 
-#include "serpent.h"
+#include "../e_os.h"
+
+#ifdef OPENSSL_NO_SERPENT
+int main(int argc, char **argv)
+{
+	printf("No Serpent support\n");
+	return 0;
+}
+#else
+
+#include <openssl/serpent.h>
 
 char *plain[] =
 { "3DA46FFA6F4D6F30CD258333E5A61369" };
@@ -67,7 +131,7 @@ int main(void)
 		plen = hex2bin(pt1, plain[i]);
 		klen = hex2bin(key, keys[i]);
 
-		// set key
+		/* set key */
 		memset(&skey, 0, sizeof(skey));
 		p = (uint32_t*)&skey.x[0][0];
 
@@ -75,23 +139,24 @@ int main(void)
 		printf("\nkey=");
 
 		for (j = 0; j<sizeof(skey) / sizeof(serpent_subkey_t) * 4; j++) {
-			if ((j % 8) == 0) putchar('\n');
+			if ((j % 8) == 0) 
+				putchar('\n');
 			printf("%08X ", p[j]);
 		}
 
-		// encrypt
-		memcpy(ct2.b, pt1, SERPENT_BLK_LEN);
+		/* encrypt */
+		memcpy(ct2.b, pt1, SERPENT_BLOCK_SIZE);
 
 		printf("\n\n");
 		dump_hex("plaintext", ct2.b, 16);
 
-		serpent_encrypt(ct2.b, &skey);
+		serpent_encrypt(pt1,ct2.b, &skey);
 
 		dump_hex("ciphertext", ct2.b, 16);
 
 		if (memcmp(ct1, ct2.b, clen) == 0) {
 			printf("\nEncryption OK");
-			serpent_decrypt(ct2.b, &skey);
+			serpent_decrypt(ct2.b,pt1, &skey);
 			if (memcmp(pt1, ct2.b, plen) == 0) {
 				printf("\nDecryption OK");
 				dump_hex("plaintext", ct2.b, 16);
@@ -106,3 +171,4 @@ int main(void)
 	}
 	return 0;
 }
+#endif
